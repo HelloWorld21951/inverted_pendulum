@@ -5,16 +5,16 @@
 #include "usart.h"
 #include "gpio.h"
 
-const double car_ticks_to_m = 0.01; // FIXME
-const double pend_ticks_to_rad = 0.01; // FIXME
+const double cart_ticks_to_m = 0.05 / 1024;
+const double pend_ticks_to_rad = M_PI / 1024;
 
 const double g = 9.81;
 const double l = 0.617;
-const double m_p = 0.2; // FIXME
-const double m_c = 0.2; // FIXME
+const double m_p = 0.355;
+const double m_c = 0.216;
 const double alpha = 10.0;
 
-const double dt = 0.01; // FIXME
+const double dt = 0.1;
 const double max_velocity_error = 0.001;
 
 double control_velocity = 0.0;
@@ -22,21 +22,11 @@ double control_velocity = 0.0;
 void SystemClock_Config(void);
 //FIXME
 int32_t convert_speed(double speed){
-	return 0;
+	return (int32_t)(speed / cart_ticks_to_m);
 }
 
 void move_carriage(double speed)
 {
-/***********************************************************************************
-   Function for speed control of DC motor
-   moving_of_carriage(0); // Stop moving
-   moving_of_carriage(-number); // Right moving
-   moving_of_carriage(+number); // Left moving
-
-   Center is 32000 at TIM8 after calibration
-   Left corner is Left edge position = 38000 tics at TIM8
-   Right corner is Right edge position = 26000 tics at TIM8
-***********************************************************************************/
 	if (fabs(speed) <= max_velocity_error)
 	{
 		LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_1); // Stop moving
@@ -50,17 +40,17 @@ void move_carriage(double speed)
 
 	if (converted_speed < 0)
 	{
-		converted_speed = fmax(converted_speed, -500);
+		converted_speed = fmax(converted_speed, -200);
 		LL_TIM_OC_SetCompareCH3(TIM2, 0);
-		LL_TIM_OC_SetCompareCH2(TIM2, (-((int32_t)converted_speed)) + 17);
+		LL_TIM_OC_SetCompareCH2(TIM2, (-((int32_t)converted_speed)));
 		return;
 	}
 
 	if (converted_speed > 0)
 	{
-		converted_speed = fmin(converted_speed, 500);
+		converted_speed = fmin(converted_speed, 200);
 		LL_TIM_OC_SetCompareCH2(TIM2, 0);
-		LL_TIM_OC_SetCompareCH3(TIM2, (uint32_t)(converted_speed + 50));
+		LL_TIM_OC_SetCompareCH3(TIM2, (int32_t)(converted_speed));
 		return;
 	}
 }
@@ -131,25 +121,25 @@ void calibration(void)
 	LL_TIM_OC_SetCompareCH3(TIM2,40);           // Left moving
 }
 
-double get_carriage_position(){
-	return TIM8->CNT * car_ticks_to_m;
+double get_cart_position(){
+	return (TIM8->CNT - 32000) * cart_ticks_to_m;
 }
 double get_pendulum_position(){
-	return TIM4->CNT * pend_ticks_to_rad;
+	return (TIM4->CNT - 32000) * pend_ticks_to_rad;
 }
 // FIXME
-double get_carriage_speed(){
+double get_cart_speed(){
 	TIM5->CNT = 0;
 	uint16_t zeroPos = TIM8->CNT;
 	while (zeroPos == TIM8->CNT);
-	return TIM5->CNT * (TIM8->CNT - zeroPos);
+	return TIM5->CNT * (TIM8->CNT - zeroPos) * cart_ticks_to_m;
 }
 // FIXME
 double get_pendulum_speed(){
 	TIM5->CNT = 0;
 	uint16_t zeroPos = TIM4->CNT;
 	while (zeroPos == TIM4->CNT);
-	return (1000000 / TIM5->CNT * (TIM4->CNT - zeroPos));
+	return TIM5->CNT * (TIM4->CNT - zeroPos) * pend_ticks_to_rad;
 }
 double get_force(double x, double theta, double x_dot, double theta_dot){
 	double E = m_p * l * 2 * pow(theta_dot, 2) / 2 -
@@ -168,17 +158,17 @@ double get_control_velocity(double F){
 }
 
 void send_data(int32_t data){
-	while ((UART5->SR & USART_SR_RXNE) == 0) {} // Ждем пустого регистра
+	while ((UART5->SR & USART_SR_RXNE) == 0) {}
 	uint8_t flag = UART5->DR;
-	while ((UART5->SR & USART_SR_TXE) == 0) {} // Ждем пустого регистра
+	while ((UART5->SR & USART_SR_TXE) == 0) {}
 	UART5->DR = flag;
-	while ((UART5->SR & USART_SR_TXE) == 0) {} // Ждем пустого регистра
+	while ((UART5->SR & USART_SR_TXE) == 0) {}
 	UART5->DR = data & 0xFF;
-	while ((UART5->SR & USART_SR_TXE) == 0) {} // Ждем пустого регистра
+	while ((UART5->SR & USART_SR_TXE) == 0) {}
 	UART5->DR = (data>>8) & 0xFF;
-	while ((UART5->SR & USART_SR_TXE) == 0) {} // Ждем пустого регистра
+	while ((UART5->SR & USART_SR_TXE) == 0) {}
 	UART5->DR = (data>>16) & 0xFF;
-	while ((UART5->SR & USART_SR_TXE) == 0) {} // Ждем пустого регистра
+	while ((UART5->SR & USART_SR_TXE) == 0) {}
 	UART5->DR = (data>>24) & 0xFF;
 }
 /**
@@ -207,7 +197,7 @@ int main(void)
 
 	TIM4->CR1 |= (1<<0); // Start timer 4 to read encoder
 	TIM8->CR1 |= (1<<0); // Start timer 8 to read encoder
-	TIM5->CR1 |= (1<<0); // Start timer 3
+	TIM5->CR1 |= (1<<0); // Start timer 5
 	UART5->CR1 |= USART_CR1_TE | USART_CR1_RE ; // Enable transmission and receiving USART data
 	LL_TIM_CC_EnableChannel(TIM2, LL_TIM_CHANNEL_CH2);
 	LL_TIM_CC_EnableChannel(TIM2, LL_TIM_CHANNEL_CH3);
@@ -225,13 +215,14 @@ int main(void)
 
 	while (1)
 	{
-		x = get_carriage_position();
+		x = get_cart_position();
 		theta = get_pendulum_position();
-		x_dot = get_carriage_speed();
+		x_dot = get_cart_speed();
 		theta_dot = get_pendulum_speed();
 		F = get_force(x, theta, x_dot, theta_dot);
 		v = get_control_velocity(F);
 		move_carriage(v);
+		LL_mDelay((int32_t)(dt * 1000));
 	}
 }
 /**
